@@ -597,7 +597,7 @@ ClientProxy::Insert(const std::string& collection_name, const std::string& parti
         insert_param.set_collection_name(collection_name);
         insert_param.set_partition_tag(partition_tag);
 
-        CopyFieldValue(field_value, insert_param);
+        CopyFieldValue(field_value, insert_param,schema);
 
         // Single thread
         ::milvus::grpc::EntityIds entity_ids;
