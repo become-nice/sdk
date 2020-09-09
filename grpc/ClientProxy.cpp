@@ -48,23 +48,21 @@ ConstructSearchParam(const std::string& collection_name, const std::vector<std::
 
 template<typename T>
 void
-Serialization(const std::unordered_map<std::string, std::vector<T>> &value_map,
+Serialization(const std::vector<T> &field_data,
+             FieldPtr field,
              std::vector<std::vector<byte>> &binary_data,
              milvus::grpc::InsertParam &insert_param,
              milvus::grpc::DataType data_type) {
-    for (auto &field_it : value_map) {
         auto grpc_field = insert_param.mutable_schema()->add_field_metas();
-        grpc_field->set_field_name(field_it.first);
+        grpc_field->set_field_name(field->field_name);
         grpc_field->set_type(data_type);
-        grpc_field->set_dim(1);
-        auto field_data = field_it.second;
+        grpc_field->set_dim(field->dim);
         auto data_size = field_data.size();
         for (int i = 0; i < data_size; i++) {
             const byte *begin = reinterpret_cast< const byte * >( &field_data[i]);
             const byte *end = begin + sizeof(T);
             binary_data[i].insert(std::end(binary_data[i]), begin, end);
         }
-    }
 }
 
 void
@@ -174,47 +172,61 @@ ConstructTopkQueryResult(const ::milvus::grpc::QueryResult& grpc_result, TopKQue
 }
 
 void
-CopyFieldValue(const FieldValue &field_value, milvus::grpc::InsertParam &insert_param) {
+CopyFieldValue(const FieldValue &field_value, milvus::grpc::InsertParam &insert_param,Mapping& schema) {
     std::vector<std::vector<byte>> binary_data(field_value.row_num);
-    if (!field_value.int8_value.empty()) {
-        Serialization(field_value.int8_value, binary_data, insert_param, milvus::grpc::DataType::INT8);
-    }
-    if (!field_value.int16_value.empty()) {
-        Serialization(field_value.int16_value, binary_data, insert_param, milvus::grpc::DataType::INT16);
-    }
-    if (!field_value.int32_value.empty()) {
-        Serialization(field_value.int32_value, binary_data, insert_param, milvus::grpc::DataType::INT32);
-    }
-    if (!field_value.int64_value.empty()) {
-        Serialization(field_value.int64_value, binary_data, insert_param, milvus::grpc::DataType::INT64);
-    }
-    if (!field_value.float_value.empty()) {
-        Serialization(field_value.float_value, binary_data, insert_param, milvus::grpc::DataType::FLOAT);
-    }
-    if (!field_value.double_value.empty()) {
-        Serialization(field_value.double_value, binary_data, insert_param, milvus::grpc::DataType::DOUBLE);
-    }
-    if (!field_value.vector_value.empty()) {
-        for (auto &field_it : field_value.vector_value) {
-            auto grpc_field = insert_param.mutable_schema()->add_field_metas();
-            grpc_field->set_field_name(field_it.first);
-            auto field_data = field_it.second;
-            auto data_size = field_data.size();
-            if (field_data[0].binary_data.empty()) {
-                grpc_field->set_type(milvus::grpc::DataType::VECTOR_FLOAT);
-                grpc_field->set_dim(field_data[0].float_data.size());
-                for (int i = 0; i < data_size; i++) {
-                    const byte *begin = reinterpret_cast< const byte * >( field_data[i].float_data.data());
-                    const byte *end = begin + sizeof(float) * (field_data[i].float_data.size());
-                    binary_data[i].insert(std::end(binary_data[i]), begin, end);
-                }
-            } else {
+    for (auto &field_meta : schema.fields){
+        switch (field_meta->field_type) {
+            case DataType::INT8:
+            case DataType::BOOL: {
+                Serialization(field_value.int8_value.at(field_meta->field_name),field_meta,binary_data,insert_param,milvus::grpc::DataType::INT8);
+                break;
+            }
+            case DataType::INT16: {
+                Serialization(field_value.int16_value.at(field_meta->field_name),field_meta,binary_data,insert_param,milvus::grpc::DataType::INT16);
+                break;
+            }
+            case DataType::INT32: {
+                Serialization(field_value.int32_value.at(field_meta->field_name),field_meta,binary_data,insert_param,milvus::grpc::DataType::INT32);
+                break;
+            }
+            case DataType::INT64: {
+                Serialization(field_value.int64_value.at(field_meta->field_name),field_meta,binary_data,insert_param,milvus::grpc::DataType::INT64);
+                break;
+            }
+            case DataType::FLOAT: {
+                Serialization(field_value.float_value.at(field_meta->field_name),field_meta,binary_data,insert_param,milvus::grpc::DataType::FLOAT);
+                break;
+            }
+            case DataType::DOUBLE: {
+                Serialization(field_value.double_value.at(field_meta->field_name),field_meta,binary_data,insert_param,milvus::grpc::DataType::DOUBLE);
+                break;
+            }
+            case DataType::VECTOR_BINARY: {
+                auto grpc_field = insert_param.mutable_schema()->add_field_metas();
+                grpc_field->set_field_name(field_meta->field_name);
+                auto field_data = field_value.vector_value.at(field_meta->field_name);
+                auto data_size = field_data.size();
                 grpc_field->set_type(milvus::grpc::DataType::VECTOR_BINARY);
                 grpc_field->set_dim(field_data[0].binary_data.size());
                 for (int i = 0; i < data_size; i++) {
                     binary_data[i].insert(std::end(binary_data[i]), field_data[i].binary_data.data(),
                                           field_data[i].binary_data.data() + field_data[i].binary_data.size());
                 }
+                break;
+            }
+            case DataType::VECTOR_FLOAT: {
+                auto grpc_field = insert_param.mutable_schema()->add_field_metas();
+                grpc_field->set_field_name(field_meta->field_name);
+                auto field_data = field_value.vector_value.at(field_meta->field_name);
+                auto data_size = field_data.size();
+                grpc_field->set_type(milvus::grpc::DataType::VECTOR_FLOAT);
+                grpc_field->set_dim(field_data[0].binary_data.size());
+                for (int i = 0; i < data_size; i++) {
+                    const byte *begin = reinterpret_cast< const byte * >( field_data[i].float_data.data());
+                    const byte *end = begin + sizeof(float) * (field_data[i].float_data.size());
+                    binary_data[i].insert(std::end(binary_data[i]), begin, end);
+                }
+                break;
             }
         }
     }
@@ -576,7 +588,10 @@ ClientProxy::DropIndex(const std::string& collection_name, const std::string& fi
 Status
 ClientProxy::Insert(const std::string& collection_name, const std::string& partition_tag, const FieldValue& field_value,
                     std::vector<int64_t>& id_array) {
+    Mapping schema;
     Status status = Status::OK();
+    GetCollectionInfo(collection_name,schema);
+
     try {
         ::milvus::grpc::InsertParam insert_param;
         insert_param.set_collection_name(collection_name);
